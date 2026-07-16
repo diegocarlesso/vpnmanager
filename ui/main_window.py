@@ -79,6 +79,11 @@ class MainWindow(QMainWindow):
         # Credenciais informadas manualmente com "salvar" marcado: persistidas
         # somente após a operação de conexão ser bem-sucedida.
         self._pending_remember: Dict[str, tuple] = {}
+        # VPNs com um connect/reconnect em andamento: evita que um clique duplicado
+        # (ex.: usuário reclica "Conectar" enquanto o diálogo de credenciais da
+        # tentativa anterior ainda está aberto) dispare uma segunda tentativa sem
+        # credenciais que, ao falhar, descartaria a marcação de "lembrar" pendente.
+        self._connect_ops_in_flight: Set[str] = set()
         # VPNs cuja desconexão foi pedida explicitamente pelo usuário: usado
         # para não disparar reconexão automática nesses casos.
         self._user_disconnecting: Set[str] = set()
@@ -269,6 +274,7 @@ class MainWindow(QMainWindow):
     def _start_auto_reconnect(self, entry: VpnEntry) -> None:
         key = entry.key()
         self._auto_reconnecting.add(key)
+        self._connect_ops_in_flight.add(key)
         logger.info("Conexão '%s' caiu inesperadamente; tentando reconectar automaticamente.", entry.name)
         self._notification_service.notify(
             entry.name,
@@ -309,8 +315,13 @@ class MainWindow(QMainWindow):
     # Ações de conexão
     # ------------------------------------------------------------------
     def _on_connect_requested(self, name: str) -> None:
-        self._user_disconnecting.discard(name.casefold())
+        key = name.casefold()
+        if key in self._connect_ops_in_flight:
+            return  # Já há uma tentativa de conexão em andamento para esta VPN.
+        self._connect_ops_in_flight.add(key)
+        self._user_disconnecting.discard(key)
         username, password = credential_store.load_credentials(name)
+        logger.info("Conectar '%s': credenciais salvas encontradas=%s", name, username is not None)
         self._set_transient_status(name, VpnStatus.CONNECTING)
         self._connection_service.connect(name, username, password)
 
@@ -320,8 +331,13 @@ class MainWindow(QMainWindow):
         self._connection_service.disconnect(name)
 
     def _on_reconnect_requested(self, name: str) -> None:
-        self._user_disconnecting.discard(name.casefold())
+        key = name.casefold()
+        if key in self._connect_ops_in_flight:
+            return  # Já há uma tentativa de conexão em andamento para esta VPN.
+        self._connect_ops_in_flight.add(key)
+        self._user_disconnecting.discard(key)
         username, password = credential_store.load_credentials(name)
+        logger.info("Reconectar '%s': credenciais salvas encontradas=%s", name, username is not None)
         self._set_transient_status(name, VpnStatus.CONNECTING)
         self._connection_service.reconnect(name, username, password)
 
@@ -345,17 +361,24 @@ class MainWindow(QMainWindow):
     ) -> None:
         key = name.casefold()
         self._auto_reconnecting.discard(key)
+        if operation in ("connect", "reconnect"):
+            self._connect_ops_in_flight.discard(key)
 
         icon = QSystemTrayIcon.MessageIcon.Information if success else QSystemTrayIcon.MessageIcon.Warning
         self._notification_service.notify(name, message, icon)
 
-        pending = self._pending_remember.pop(key, None)
-        if success and operation in ("connect", "reconnect") and pending is not None:
-            username, password = pending
-            if credential_store.save_credentials(name, username, password):
-                logger.info("Credenciais salvas com segurança para '%s'.", name)
-            else:
-                logger.warning("Falha ao salvar credenciais para '%s'.", name)
+        if success and operation in ("connect", "reconnect"):
+            # Só remove a marcação de "lembrar" quando ela é de fato usada: uma
+            # tentativa concorrente sem credenciais (ex.: clique duplicado em
+            # "Conectar" enquanto o diálogo desta VPN ainda está aberto) não pode
+            # descartar silenciosamente o pedido de salvar da tentativa correta.
+            pending = self._pending_remember.pop(key, None)
+            if pending is not None:
+                username, password = pending
+                if credential_store.save_credentials(name, username, password):
+                    logger.info("Credenciais salvas com segurança para '%s'.", name)
+                else:
+                    logger.warning("Falha ao salvar credenciais para '%s'.", name)
 
         if not success and operation in ("connect", "reconnect") and self._looks_like_credential_error(message):
             # Credenciais salvas podem estar desatualizadas (ex.: senha trocada);
@@ -371,12 +394,20 @@ class MainWindow(QMainWindow):
         return any(hint in lowered for hint in _CREDENTIAL_ERROR_HINTS)
 
     def _prompt_and_retry_with_credentials(self, name: str) -> None:
+        key = name.casefold()
+        # Mantém o guard de conexão em andamento durante o diálogo (modal, mas que
+        # processa a fila de eventos): sem isso, um refresh assíncrono pode reabilitar
+        # o botão "Conectar" enquanto o diálogo ainda está aberto, permitindo um
+        # clique duplicado que dispara uma tentativa concorrente sem credenciais.
+        self._connect_ops_in_flight.add(key)
         dialog = CredentialsDialog(name, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
+            self._connect_ops_in_flight.discard(key)
             return
         username, password, remember = dialog.result_credentials()
+        logger.info("Diálogo de credenciais de '%s' aceito: salvar_marcado=%s", name, remember)
         if remember:
-            self._pending_remember[name.casefold()] = (username, password)
+            self._pending_remember[key] = (username, password)
         self._set_transient_status(name, VpnStatus.CONNECTING)
         self._connection_service.connect(name, username, password)
 
