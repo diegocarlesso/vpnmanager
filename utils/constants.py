@@ -7,7 +7,7 @@ from pathlib import Path
 
 APP_NAME = "VPN Manager"
 ORG_NAME = "VPNManager"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 
 if getattr(sys, "frozen", False):
     # Executando a partir do .exe gerado pelo PyInstaller: por padrão config/logs
