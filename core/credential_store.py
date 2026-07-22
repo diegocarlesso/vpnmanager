@@ -89,8 +89,25 @@ def load_credentials(vpn_name: str) -> Tuple[Optional[str], Optional[str]]:
 
 
 def has_saved_credentials(vpn_name: str) -> bool:
-    username, password = load_credentials(vpn_name)
-    return bool(username) and password is not None
+    """Verifica se há credencial salva, sem decodificar a senha em memória Python.
+
+    Chamado a cada ciclo do monitor (a cada 2-10s) para toda VPN listada — usar
+    load_credentials() aqui materializaria a senha em texto claro num objeto
+    Python a cada poll, sem necessidade. CredReadW ainda decripta o blob
+    internamente (isso é inerente à API do Windows), mas evitamos copiá-lo para
+    uma string Python quando só precisamos saber se ele existe.
+    """
+    if _advapi32 is None:
+        return False
+    cred_ptr = ctypes.POINTER(_CREDENTIAL)()
+    ok = _advapi32.CredReadW(_target_name(vpn_name), _CRED_TYPE_GENERIC, 0, ctypes.byref(cred_ptr))
+    if not ok:
+        return False
+    try:
+        cred = cred_ptr.contents
+        return bool(cred.UserName) and cred.CredentialBlobSize > 0
+    finally:
+        _advapi32.CredFree(cred_ptr)
 
 
 def save_credentials(vpn_name: str, username: str, password: str) -> bool:

@@ -5,3 +5,5 @@ build/
 dist/
 config/settings.json
 logs/*.log
+installer/Output/
+.pytest_cache/

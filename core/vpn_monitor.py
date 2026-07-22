@@ -72,6 +72,29 @@ class VpnMonitor(QObject):
         try:
             entries = self._pbk_parser.get_all_vpn_entries()
             active_result = self._rasdial_manager.list_active_connections()
+
+            if not active_result.success:
+                # rasdial falhou ao consultar conexões ativas (timeout, permissão, encoding,
+                # servico RAS indisponível etc.). Sem essa informação não sabemos o estado real,
+                # então preservamos o último estado conhecido em vez de marcar tudo como
+                # desconectado — isso evitaria reconexão automática indevida e faria a UI
+                # mostrar uma VPN ativa como caída só porque uma consulta falhou.
+                logger.warning(
+                    "Falha ao consultar conexões ativas (rc=%s): %s",
+                    active_result.return_code,
+                    active_result.stderr or active_result.stdout,
+                )
+                for key, entry in entries.items():
+                    previous = self._known_entries.get(key)
+                    if previous is not None:
+                        entry.status = previous.status
+                        entry.connected_since = previous.connected_since
+                        entry.local_ip = previous.local_ip
+                self._known_entries = entries
+                self.vpns_updated.emit(entries)
+                self.error_occurred.emit("Não foi possível consultar o estado das conexões VPN.")
+                return
+
             active_names = {
                 n.casefold() for n in self._rasdial_manager.parse_active_connections(active_result)
             }

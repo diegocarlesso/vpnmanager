@@ -119,7 +119,6 @@ class VpnConfigManager:
         """Verifica se já existe uma VPN com esse nome no OUTRO escopo (a UI mescla por nome)."""
         other_scope = "user" if all_users else "system"
         entries = self._pbk_parser.get_all_vpn_entries()
-        entry = entries.get(name.casefold())
-        if entry is not None and entry.scope == other_scope:
+        if f"{other_scope}:{name.casefold()}" in entries:
             return other_scope
         return None

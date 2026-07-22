@@ -1,12 +1,20 @@
 """Funções utilitárias diversas: formatação, sanitização e geração de ícones."""
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 
 from utils.constants import ASSETS_DIR
+
+# Mascara valores associados a chaves sensíveis (ex.: "password=hunter2" vira
+# "password=***"), caso alguma mensagem de erro de subprocesso ou script PowerShell
+# ecoe acidentalmente um argumento com credencial.
+_SECRET_KEY_VALUE = re.compile(
+    r"(?i)\b(password|senha|pwd|token|secret)\b\s*[:=]\s*\S+"
+)
 
 
 def format_duration(total_seconds: int) -> str:
@@ -20,8 +28,9 @@ def format_duration(total_seconds: int) -> str:
 
 
 def sanitize_for_log(text: str) -> str:
-    """Remove quebras de linha e espaços supérfluos para manter o log em uma linha."""
-    return text.replace("\r", " ").replace("\n", " ").strip()
+    """Remove quebras de linha e mascara padrões de credencial antes de gravar em log."""
+    cleaned = text.replace("\r", " ").replace("\n", " ").strip()
+    return _SECRET_KEY_VALUE.sub(lambda m: f"{m.group(1)}=***", cleaned)
 
 
 def truncate(text: str, max_length: int = 60) -> str:

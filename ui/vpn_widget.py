@@ -52,6 +52,7 @@ class VpnWidget(QFrame):
     connect_requested = Signal(str)
     disconnect_requested = Signal(str)
     reconnect_requested = Signal(str)
+    cancel_requested = Signal(str)
     favorite_toggled = Signal(str)
     edit_requested = Signal(str)
     delete_requested = Signal(str)
@@ -104,16 +105,20 @@ class VpnWidget(QFrame):
         self._connect_btn = QPushButton("Conectar", self)
         self._disconnect_btn = QPushButton("Desconectar", self)
         self._reconnect_btn = QPushButton("Reconectar", self)
-        for btn in (self._connect_btn, self._disconnect_btn, self._reconnect_btn):
+        self._cancel_btn = QPushButton("Cancelar", self)
+        for btn in (self._connect_btn, self._disconnect_btn, self._reconnect_btn, self._cancel_btn):
             btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
-        self._connect_btn.clicked.connect(lambda: self.connect_requested.emit(self._entry.name))
-        self._disconnect_btn.clicked.connect(lambda: self.disconnect_requested.emit(self._entry.name))
-        self._reconnect_btn.clicked.connect(lambda: self.reconnect_requested.emit(self._entry.name))
+        self._connect_btn.clicked.connect(lambda: self.connect_requested.emit(self._entry.key()))
+        self._disconnect_btn.clicked.connect(lambda: self.disconnect_requested.emit(self._entry.key()))
+        self._reconnect_btn.clicked.connect(lambda: self.reconnect_requested.emit(self._entry.key()))
+        self._cancel_btn.clicked.connect(lambda: self.cancel_requested.emit(self._entry.key()))
 
         root.addWidget(self._connect_btn)
         root.addWidget(self._disconnect_btn)
         root.addWidget(self._reconnect_btn)
+        root.addWidget(self._cancel_btn)
+        self._cancel_btn.setVisible(False)
 
         self._menu_btn = QPushButton("⋮", self)
         self._menu_btn.setFixedWidth(28)
@@ -125,15 +130,15 @@ class VpnWidget(QFrame):
         menu.setToolTipsVisible(True)
         fav_text = "Remover dos favoritos" if self._entry.is_favorite else "Marcar como favorita"
         fav_action = menu.addAction(fav_text)
-        fav_action.triggered.connect(lambda: self.favorite_toggled.emit(self._entry.name))
+        fav_action.triggered.connect(lambda: self.favorite_toggled.emit(self._entry.key()))
 
         if self._entry.has_saved_credentials:
             forget_action = menu.addAction("Esquecer credenciais salvas")
-            forget_action.triggered.connect(lambda: self.forget_credentials_requested.emit(self._entry.name))
+            forget_action.triggered.connect(lambda: self.forget_credentials_requested.emit(self._entry.key()))
 
         menu.addSeparator()
         edit_action = menu.addAction("Editar…")
-        edit_action.triggered.connect(lambda: self.edit_requested.emit(self._entry.name))
+        edit_action.triggered.connect(lambda: self.edit_requested.emit(self._entry.key()))
         delete_action = menu.addAction("Excluir…")
         delete_action.triggered.connect(self._confirm_delete)
         if not self._can_edit:
@@ -152,12 +157,18 @@ class VpnWidget(QFrame):
             f"Excluir a conexão VPN '{self._entry.name}'? Essa ação não pode ser desfeita.",
         )
         if answer == QMessageBox.StandardButton.Yes:
-            self.delete_requested.emit(self._entry.name)
+            self.delete_requested.emit(self._entry.key())
 
     def update_entry(self, entry: VpnEntry) -> None:
         """Atualiza o conteúdo visual do cartão a partir de um VpnEntry atualizado."""
         self._entry = entry
-        self._name_label.setText(entry.name + (" ★" if entry.is_favorite else ""))
+        label = entry.name
+        if entry.duplicate_name:
+            # Mesmo nome existe em outro escopo (usuário/sistema): sem isso, os dois
+            # cartões seriam indistinguíveis na tela.
+            scope_label = "sistema" if entry.scope == "system" else "usuário"
+            label = f"{entry.name} ({scope_label})"
+        self._name_label.setText(label + (" ★" if entry.is_favorite else ""))
         self._server_label.setText(entry.server or "Servidor não especificado")
         self._status_label.setText(entry.status.value)
         self._status_dot.set_status(entry.status)
@@ -168,15 +179,19 @@ class VpnWidget(QFrame):
         self._ip_label.setVisible(bool(is_connected and entry.local_ip))
 
         if not self._busy:
+            is_connecting = entry.status == VpnStatus.CONNECTING
             is_busy = entry.status in (VpnStatus.CONNECTING, VpnStatus.DISCONNECTING)
             self._connect_btn.setEnabled(not is_connected and not is_busy)
             self._disconnect_btn.setEnabled(is_connected and not is_busy)
             self._reconnect_btn.setEnabled(not is_busy)
+            # "Cancelar" só faz sentido enquanto uma tentativa de conexão está em
+            # andamento (é a única operação demorada e realmente cancelável hoje).
+            self._cancel_btn.setVisible(is_connecting)
 
     def set_busy(self, busy: bool) -> None:
         """Desabilita as ações do cartão enquanto uma operação de configuração está em andamento."""
         self._busy = busy
-        for btn in (self._connect_btn, self._disconnect_btn, self._reconnect_btn, self._menu_btn):
+        for btn in (self._connect_btn, self._disconnect_btn, self._reconnect_btn, self._cancel_btn, self._menu_btn):
             btn.setEnabled(not busy)
         if not busy:
             self.update_entry(self._entry)

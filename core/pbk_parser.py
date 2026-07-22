@@ -42,11 +42,19 @@ class PbkParser:
         return latest
 
     def get_all_vpn_entries(self) -> Dict[str, VpnEntry]:
-        """Combina as entradas de todos os arquivos .pbk encontrados, indexadas por nome."""
+        """Combina as entradas de todos os arquivos .pbk encontrados, indexadas por escopo+nome."""
         entries: Dict[str, VpnEntry] = {}
         for path in self.get_pbk_paths():
             for entry in self.parse_pbk_file(path):
                 entries[entry.key()] = entry
+
+        name_counts: Dict[str, int] = {}
+        for entry in entries.values():
+            folded = entry.name.casefold()
+            name_counts[folded] = name_counts.get(folded, 0) + 1
+        for entry in entries.values():
+            entry.duplicate_name = name_counts[entry.name.casefold()] > 1
+
         return entries
 
     def _scope_for_path(self, path: Path) -> str:
@@ -92,6 +100,7 @@ class PbkParser:
                     conn_type=conn_type,
                     status=VpnStatus.DISCONNECTED,
                     scope=scope,
+                    phonebook_path=str(path),
                 )
             )
         return entries

@@ -33,6 +33,8 @@ class VpnEntry:
     is_favorite: bool = False
     scope: str = "user"  # "user" (USER_PBK_PATH) ou "system" (SYSTEM_PBK_PATH)
     local_ip: str = ""
+    phonebook_path: str = ""  # caminho real do .pbk de onde esta entrada foi lida
+    duplicate_name: bool = False  # True se este nome existe em mais de um escopo/phonebook
 
     @property
     def uptime_seconds(self) -> int:
@@ -42,8 +44,14 @@ class VpnEntry:
         return int((datetime.now() - self.connected_since).total_seconds())
 
     def key(self) -> str:
-        """Chave normalizada (case-insensitive) usada para indexação em dicionários."""
-        return self.name.casefold()
+        """Chave normalizada e única por escopo, usada para indexação em dicionários.
+
+        Duas VPNs com o mesmo nome em phonebooks diferentes (usuário vs. sistema)
+        são entradas distintas para o Windows RAS e não podem compartilhar uma
+        única chave — isso faria uma sobrescrever a outra na lista e o rasdial
+        poderia acabar discando a entrada errada.
+        """
+        return f"{self.scope}:{self.name.casefold()}"
 
 
 @dataclass

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import sys
 from datetime import date
 
 from utils.constants import LOGS_DIR
@@ -38,8 +39,12 @@ def setup_logging(level: int = logging.INFO) -> logging.Logger:
     file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
 
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    root_logger.addHandler(console_handler)
+    if not getattr(sys, "frozen", False):
+        # No .exe empacotado (--windowed) não há console real: sys.stderr é
+        # substituído por uma stream nula em main.py, então um StreamHandler aqui
+        # não teria efeito — evitamos o handler extra por clareza.
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
 
     return root_logger

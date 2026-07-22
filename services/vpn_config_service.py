@@ -13,7 +13,7 @@ logger = logging.getLogger("vpn_manager.vpnconfigservice")
 
 
 class _ConfigSignals(QObject):
-    finished = Signal(str, str, bool, str, bool)  # name, operation, success, message, partial
+    finished = Signal(str, str, bool, str, bool, bool)  # name, operation, success, message, partial, all_users
 
 
 class _DetailsSignals(QObject):
@@ -30,6 +30,10 @@ class _ConfigTask(QRunnable):
         self._operation = operation
         self._name = name
         self._kwargs = kwargs
+        # add/update/delete sempre recebem 'all_users' em kwargs; guardado à parte
+        # para que o sinal de conclusão permita reconstruir a chave escopo+nome do
+        # lado da UI mesmo quando a operação falha antes de calcular qualquer resultado.
+        self._all_users = bool(kwargs.get("all_users", False))
         self.signals = _ConfigSignals()
 
     @Slot()
@@ -45,7 +49,7 @@ class _ConfigTask(QRunnable):
                 result = PsResult(False, {}, f"Operação desconhecida: {self._operation}")
         except Exception as exc:  # noqa: BLE001 - não pode derrubar a worker thread
             logger.exception("Erro inesperado em '%s' para '%s'", self._operation, self._name)
-            self.signals.finished.emit(self._name, self._operation, False, str(exc), False)
+            self.signals.finished.emit(self._name, self._operation, False, str(exc), False, self._all_users)
             return
 
         message = _friendly_message(self._operation, result)
@@ -59,7 +63,9 @@ class _ConfigTask(QRunnable):
         )
         if not result.success:
             logger.warning("Falha em '%s' para '%s': %s", self._operation, self._name, result.error)
-        self.signals.finished.emit(self._name, self._operation, result.success, message, result.partial)
+        self.signals.finished.emit(
+            self._name, self._operation, result.success, message, result.partial, self._all_users
+        )
 
 
 class _DetailsTask(QRunnable):
@@ -75,7 +81,11 @@ class _DetailsTask(QRunnable):
 
     @Slot()
     def run(self) -> None:
-        details = self._manager.get_details(self._name, self._all_users)
+        try:
+            details = self._manager.get_details(self._name, self._all_users)
+        except Exception:  # noqa: BLE001 - sem isso, 'finished' nunca é emitido e o widget fica travado em busy
+            logger.exception("Erro inesperado ao buscar detalhes de '%s'", self._name)
+            details = None
         self.signals.finished.emit(self._name, self._all_users, details)
 
 
@@ -105,7 +115,7 @@ class VpnConfigService(QObject):
     trave os botões de conectar/desconectar de outras VPNs.
     """
 
-    operation_finished = Signal(str, str, bool, str, bool)  # name, operation, success, message, partial
+    operation_finished = Signal(str, str, bool, str, bool, bool)  # name, operation, success, message, partial, all_users
     details_fetched = Signal(str, bool, object)  # name, all_users, Optional[VpnConnectionDetails]
 
     def __init__(self, manager: VpnConfigManager) -> None:
