@@ -325,7 +325,7 @@ class MainWindow(QMainWindow):
             f"Conexão perdida — tentando reconectar automaticamente… ({attempt}/{_AUTO_RECONNECT_MAX_ATTEMPTS})",
             QSystemTrayIcon.MessageIcon.Warning,
         )
-        username, password = credential_store.load_credentials(entry.name)
+        username, password = credential_store.load_credentials(entry.name, entry.phonebook_path)
         self._set_transient_status(key, VpnStatus.CONNECTING)
         self._connection_service.connect(
             key, entry.name, username=username, password=password, phonebook_path=entry.phonebook_path
@@ -425,7 +425,7 @@ class MainWindow(QMainWindow):
         self._cancel_pending_auto_reconnect(key)
         self._connect_ops_in_flight.add(key)
         self._user_disconnecting.pop(key, None)
-        username, password = credential_store.load_credentials(entry.name)
+        username, password = credential_store.load_credentials(entry.name, entry.phonebook_path)
         logger.info(
             "Conectar '%s' (%s): credenciais salvas encontradas=%s", entry.name, entry.scope, username is not None
         )
@@ -452,7 +452,7 @@ class MainWindow(QMainWindow):
         self._cancel_pending_auto_reconnect(key)
         self._connect_ops_in_flight.add(key)
         self._user_disconnecting.pop(key, None)
-        username, password = credential_store.load_credentials(entry.name)
+        username, password = credential_store.load_credentials(entry.name, entry.phonebook_path)
         logger.info(
             "Reconectar '%s' (%s): credenciais salvas encontradas=%s", entry.name, entry.scope, username is not None
         )
@@ -593,7 +593,11 @@ class MainWindow(QMainWindow):
     def _open_add_vpn_dialog(self) -> None:
         dialog = VpnEditDialog(details=None, is_admin=self._vpn_config_manager.is_admin(), parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._vpn_config_service.add(**dialog.result())
+            result = dialog.result()
+            self._vpn_config_service.add(**result)
+            username, password = dialog.result_credentials()
+            if username:
+                credential_store.save_credentials(result["name"], username, password)
 
     def _on_edit_requested(self, key: str) -> None:
         entry = self._entries.get(key)
@@ -620,10 +624,21 @@ class MainWindow(QMainWindow):
         if details is None:
             QMessageBox.warning(self, "Editar VPN", f"Não foi possível obter a configuração de '{name}'.")
             return
-        dialog = VpnEditDialog(details=details, is_admin=self._vpn_config_manager.is_admin(), parent=self)
+        entry = self._entries[key]
+        saved_username, saved_password = credential_store.load_credentials(name, entry.phonebook_path)
+        dialog = VpnEditDialog(
+            details=details,
+            is_admin=self._vpn_config_manager.is_admin(),
+            parent=self,
+            username=saved_username or "",
+            password=saved_password or "",
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._config_ops_in_flight.add(key)
             self._vpn_config_service.update(**dialog.result())
+            username, password = dialog.result_credentials()
+            if username:
+                credential_store.save_credentials(name, username, password)
 
     def _on_delete_requested(self, key: str) -> None:
         entry = self._entries.get(key)

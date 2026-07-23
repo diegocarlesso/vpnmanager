@@ -1,6 +1,6 @@
 <#
     Cria uma nova conexão VPN e, se split tunneling estiver ativo, suas rotas.
-    Entrada (JSON): { name, server, tunnel_type, all_users, split_tunneling, routes: [] }
+    Entrada (JSON): { name, server, tunnel_type, l2tp_psk, all_users, split_tunneling, routes: [] }
     Saída (JSON): { success, partial, error, data: { name, routes: [{route, action, success, error}] } }
 #>
 param(
@@ -16,8 +16,22 @@ try {
     $allUsers = [bool]$in.all_users
     $splitTunneling = [bool]$in.split_tunneling
 
-    $conn = Add-VpnConnection -Name $in.name -ServerAddress $in.server -TunnelType $in.tunnel_type `
-        -AllUserConnection:$allUsers -SplitTunneling:$splitTunneling -Force -PassThru -ErrorAction Stop
+    $vpnParams = @{
+        Name              = $in.name
+        ServerAddress     = $in.server
+        TunnelType        = $in.tunnel_type
+        AllUserConnection = $allUsers
+        SplitTunneling    = $splitTunneling
+        Force             = $true
+        PassThru          = $true
+        ErrorAction       = 'Stop'
+    }
+    if ([string]::Equals([string]$in.tunnel_type, 'L2tp', [System.StringComparison]::OrdinalIgnoreCase) -and
+        -not [string]::IsNullOrWhiteSpace([string]$in.l2tp_psk)) {
+        $vpnParams['L2tpPsk'] = [string]$in.l2tp_psk
+    }
+
+    $conn = Add-VpnConnection @vpnParams
 
     $routeResults = @()
     $anyRouteFailed = $false

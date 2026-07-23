@@ -36,6 +36,7 @@ class VpnConfigManager:
         all_users: bool,
         split_tunneling: bool,
         routes: List[str],
+        l2tp_psk: str = "",
     ) -> PsResult:
         collision = self._find_cross_scope_collision(name, all_users)
         if collision is not None:
@@ -46,6 +47,7 @@ class VpnConfigManager:
             "name": name,
             "server": server,
             "tunnel_type": tunnel_type,
+            "l2tp_psk": l2tp_psk,
             "all_users": all_users,
             "split_tunneling": split_tunneling,
             "routes": routes,
@@ -60,6 +62,7 @@ class VpnConfigManager:
         tunnel_type: str,
         split_tunneling: bool,
         routes: List[str],
+        l2tp_psk: str = "",
     ) -> PsResult:
         self._disconnect_if_active(name)
 
@@ -77,6 +80,7 @@ class VpnConfigManager:
             "all_users": all_users,
             "server": server,
             "tunnel_type": tunnel_type,
+            "l2tp_psk": l2tp_psk,
             "split_tunneling": split_tunneling,
             "routes_to_add": routes_to_add,
             "routes_to_remove": routes_to_remove,

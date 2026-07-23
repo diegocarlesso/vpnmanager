@@ -1,7 +1,7 @@
 """Diálogo de Adicionar/Editar uma conexão VPN."""
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -39,17 +39,24 @@ class VpnEditDialog(QDialog):
         details: Optional[VpnConnectionDetails],
         is_admin: bool,
         parent: Optional[QWidget] = None,
+        username: str = "",
+        password: str = "",
     ) -> None:
         super().__init__(parent)
         self._is_edit = details is not None
         self._is_admin = is_admin
+        self._original_tunnel_type = details.tunnel_type if details is not None else ""
         self._routes: List[str] = list(details.routes) if details is not None else []
         self.setWindowTitle("Editar VPN" if self._is_edit else "Adicionar VPN")
         self.setMinimumWidth(420)
         self._build_ui()
         if details is not None:
             self._populate(details)
+        self._username_edit.setText(username)
+        self._password_edit.setText(password)
+        self._credentials_hint.setVisible(self._is_edit)
         self._update_routes_button()
+        self._update_l2tp_psk_visibility()
         self._update_uac_hint()
 
     def _build_ui(self) -> None:
@@ -65,7 +72,34 @@ class VpnEditDialog(QDialog):
 
         self._tunnel_combo = QComboBox(self)
         self._tunnel_combo.addItems(_TUNNEL_TYPES)
+        self._tunnel_combo.currentTextChanged.connect(self._update_l2tp_psk_visibility)
         form.addRow("Tipo de túnel:", self._tunnel_combo)
+
+        self._l2tp_psk_edit = QLineEdit(self)
+        self._l2tp_psk_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._l2tp_psk_edit.setPlaceholderText("Chave pré-compartilhada L2TP/IPsec")
+        form.addRow("Secret L2TP/IPsec:", self._l2tp_psk_edit)
+
+        self._l2tp_psk_hint = QLabel(
+            "Ao editar uma VPN L2TP existente, deixe vazio para manter o secret atual.", self
+        )
+        self._l2tp_psk_hint.setStyleSheet("color: #666;")
+        self._l2tp_psk_hint.setWordWrap(True)
+        form.addRow("", self._l2tp_psk_hint)
+
+        self._username_edit = QLineEdit(self)
+        form.addRow("Usuário:", self._username_edit)
+
+        self._password_edit = QLineEdit(self)
+        self._password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow("Senha:", self._password_edit)
+
+        self._credentials_hint = QLabel(
+            "Deixe usuário em branco para manter as credenciais salvas atualmente neste computador.", self
+        )
+        self._credentials_hint.setStyleSheet("color: #666;")
+        self._credentials_hint.setWordWrap(True)
+        form.addRow("", self._credentials_hint)
 
         self._user_radio = QRadioButton("Somente eu", self)
         self._system_radio = QRadioButton("Todos os usuários (requer administrador)", self)
@@ -115,11 +149,17 @@ class VpnEditDialog(QDialog):
         else:
             self._user_radio.setChecked(True)
         self._default_route_check.setChecked(not details.split_tunneling)
+        self._l2tp_psk_edit.setText(details.l2tp_psk)
 
     def _update_routes_button(self) -> None:
         split_tunneling = not self._default_route_check.isChecked()
         self._routes_btn.setEnabled(split_tunneling)
         self._routes_btn.setText(f"Editar rotas ({len(self._routes)})…")
+
+    def _update_l2tp_psk_visibility(self) -> None:
+        is_l2tp = self._tunnel_combo.currentText().casefold() == "l2tp"
+        self._l2tp_psk_edit.setVisible(is_l2tp)
+        self._l2tp_psk_hint.setVisible(is_l2tp)
 
     def _update_uac_hint(self) -> None:
         self._uac_hint.setVisible(self._system_radio.isChecked() and not self._is_admin)
@@ -137,6 +177,19 @@ class VpnEditDialog(QDialog):
             QMessageBox.warning(self, "Campos obrigatórios", "Informe o nome e o servidor da VPN.")
             return
 
+        tunnel_type = self._tunnel_combo.currentText()
+        l2tp_psk = self._l2tp_psk_edit.text()
+        l2tp_keeps_existing_secret = self._is_edit and self._original_tunnel_type.casefold() == "l2tp"
+        if tunnel_type.casefold() == "l2tp" and not l2tp_psk and not l2tp_keeps_existing_secret:
+            proceed = QMessageBox.question(
+                self,
+                "Secret L2TP não informado",
+                "Nenhum secret L2TP/IPsec foi informado. Isso só deve ser usado se a VPN não usa chave "
+                "pré-compartilhada. Salvar mesmo assim?",
+            )
+            if proceed != QMessageBox.StandardButton.Yes:
+                return
+
         split_tunneling = not self._default_route_check.isChecked()
         if split_tunneling and not self._routes:
             proceed = QMessageBox.question(
@@ -150,11 +203,16 @@ class VpnEditDialog(QDialog):
 
         super().accept()
 
+    def result_credentials(self) -> Tuple[str, str]:
+        """Usuário/senha informados. Usuário vazio significa "não alterar credenciais salvas"."""
+        return self._username_edit.text().strip(), self._password_edit.text()
+
     def result(self) -> Dict[str, object]:
         return {
             "name": self._name_edit.text().strip(),
             "server": self._server_edit.text().strip(),
             "tunnel_type": self._tunnel_combo.currentText(),
+            "l2tp_psk": self._l2tp_psk_edit.text(),
             "all_users": self._system_radio.isChecked(),
             "split_tunneling": not self._default_route_check.isChecked(),
             "routes": list(self._routes),

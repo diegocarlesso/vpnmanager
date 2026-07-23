@@ -3,7 +3,7 @@
     reconcilia suas rotas. Nome e escopo (all_users) não são alteráveis aqui —
     identificam apenas qual conexão editar.
     Entrada (JSON): {
-        name, all_users, server, tunnel_type, split_tunneling,
+        name, all_users, server, tunnel_type, l2tp_psk, split_tunneling,
         routes_to_add: [], routes_to_remove: []
     }
     Quando split_tunneling = false, TODAS as rotas customizadas existentes são
@@ -24,8 +24,23 @@ try {
     $allUsers = [bool]$in.all_users
     $splitTunneling = [bool]$in.split_tunneling
 
-    $conn = Set-VpnConnection -Name $in.name -ServerAddress $in.server -TunnelType $in.tunnel_type `
-        -AllUserConnection:$allUsers -SplitTunneling:$splitTunneling -Force -Confirm:$false -PassThru -ErrorAction Stop
+    $vpnParams = @{
+        Name              = $in.name
+        ServerAddress     = $in.server
+        TunnelType        = $in.tunnel_type
+        AllUserConnection = $allUsers
+        SplitTunneling    = $splitTunneling
+        Force             = $true
+        Confirm           = $false
+        PassThru          = $true
+        ErrorAction       = 'Stop'
+    }
+    if ([string]::Equals([string]$in.tunnel_type, 'L2tp', [System.StringComparison]::OrdinalIgnoreCase) -and
+        -not [string]::IsNullOrWhiteSpace([string]$in.l2tp_psk)) {
+        $vpnParams['L2tpPsk'] = [string]$in.l2tp_psk
+    }
+
+    $conn = Set-VpnConnection @vpnParams
 
     $routeResults = @()
     $anyRouteFailed = $false

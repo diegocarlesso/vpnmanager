@@ -123,23 +123,68 @@ class VpnConfigService(QObject):
         self._manager = manager
         self._pool = QThreadPool()
         self._pool.setMaxThreadCount(2)
+        # QRunnable não é QObject: QThreadPool.start() não impede o coletor de
+        # lixo do Python de liberar a task (e seu 'signals') antes de run()
+        # terminar na worker thread, descartando o sinal 'finished' em
+        # silêncio — o botão da VPN ficava "ocupado" (desabilitado) para
+        # sempre, sem erro nenhum. Mantemos uma referência forte aqui.
+        self._active_tasks: List[QRunnable] = []
+
+    def _track_task(self, task: QRunnable) -> None:
+        self._active_tasks.append(task)
+
+        def _release(*_args: object, _task: QRunnable = task) -> None:
+            try:
+                self._active_tasks.remove(_task)
+            except ValueError:
+                pass
+
+        task.signals.finished.connect(_release)
 
     def add(
-        self, name: str, server: str, tunnel_type: str, all_users: bool, split_tunneling: bool, routes: List[str]
+        self,
+        name: str,
+        server: str,
+        tunnel_type: str,
+        all_users: bool,
+        split_tunneling: bool,
+        routes: List[str],
+        l2tp_psk: str = "",
     ) -> None:
         self._submit_config(
             "add",
             name,
-            dict(server=server, tunnel_type=tunnel_type, all_users=all_users, split_tunneling=split_tunneling, routes=routes),
+            dict(
+                server=server,
+                tunnel_type=tunnel_type,
+                all_users=all_users,
+                split_tunneling=split_tunneling,
+                routes=routes,
+                l2tp_psk=l2tp_psk,
+            ),
         )
 
     def update(
-        self, name: str, all_users: bool, server: str, tunnel_type: str, split_tunneling: bool, routes: List[str]
+        self,
+        name: str,
+        all_users: bool,
+        server: str,
+        tunnel_type: str,
+        split_tunneling: bool,
+        routes: List[str],
+        l2tp_psk: str = "",
     ) -> None:
         self._submit_config(
             "update",
             name,
-            dict(all_users=all_users, server=server, tunnel_type=tunnel_type, split_tunneling=split_tunneling, routes=routes),
+            dict(
+                all_users=all_users,
+                server=server,
+                tunnel_type=tunnel_type,
+                split_tunneling=split_tunneling,
+                routes=routes,
+                l2tp_psk=l2tp_psk,
+            ),
         )
 
     def delete(self, name: str, all_users: bool) -> None:
@@ -148,9 +193,11 @@ class VpnConfigService(QObject):
     def fetch_details(self, name: str, all_users: bool) -> None:
         task = _DetailsTask(self._manager, name, all_users)
         task.signals.finished.connect(self.details_fetched.emit)
+        self._track_task(task)
         self._pool.start(task)
 
     def _submit_config(self, operation: str, name: str, kwargs: dict) -> None:
         task = _ConfigTask(self._manager, operation, name, kwargs)
         task.signals.finished.connect(self.operation_finished.emit)
+        self._track_task(task)
         self._pool.start(task)

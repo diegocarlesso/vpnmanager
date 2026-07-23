@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
@@ -129,6 +129,22 @@ class ConnectionService(QObject):
         # Apenas operações connect/reconnect são canceláveis (são as demoradas);
         # indexado pela mesma chave escopo+nome usada em toda a UI.
         self._active_cancel_events: Dict[str, threading.Event] = {}
+        # QRunnable não é QObject: QThreadPool.start() não impede o coletor de
+        # lixo do Python de liberar a task (e seu 'signals') antes de run()
+        # terminar na worker thread, descartando o sinal 'finished' em
+        # silêncio. Mantemos uma referência forte aqui até a task terminar.
+        self._active_tasks: List[QRunnable] = []
+
+    def _track_task(self, task: QRunnable) -> None:
+        self._active_tasks.append(task)
+
+        def _release(*_args: object, _task: QRunnable = task) -> None:
+            try:
+                self._active_tasks.remove(_task)
+            except ValueError:
+                pass
+
+        task.signals.finished.connect(_release)
 
     def connect(
         self,
@@ -179,6 +195,7 @@ class ConnectionService(QObject):
         if cancel_event is not None:
             self._active_cancel_events[key] = cancel_event
         task.signals.finished.connect(self._on_task_finished)
+        self._track_task(task)
         self._pool.start(task)
 
     def _on_task_finished(

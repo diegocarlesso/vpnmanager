@@ -64,6 +64,7 @@ class VpnConnectionDetails:
     tunnel_type: str  # "Automatic" | "Pptp" | "L2tp" | "Sstp" | "Ikev2"
     split_tunneling: bool  # True = apenas as rotas da lista; False = rota padrão (todo tráfego)
     routes: List[str] = field(default_factory=list)
+    l2tp_psk: str = ""  # o Windows não expõe a PSK existente; usado apenas ao salvar nova chave
 
 
 @dataclass

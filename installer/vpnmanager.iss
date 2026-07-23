@@ -14,7 +14,7 @@
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\vpnmanager.iss
 
 #define MyAppName "VPN Manager"
-#define MyAppVersion "1.2.1"
+#define MyAppVersion "1.3.0"
 #define MyAppPublisher "VPNManager"
 #define MyAppExeName "VPNManager.exe"
 
